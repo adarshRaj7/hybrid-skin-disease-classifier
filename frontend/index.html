@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Skin Disease Classifier (Research Demo)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  .disclaimer { background: #fff3cd; color: #664d03; border: 1px solid #ffe69c; border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .card { border: 1px solid #ddd; border-radius: 10px; padding: 1rem; margin-top: 1rem; }
+  .top3 li { display: flex; justify-content: space-between; padding: 0.25rem 0; }
+  button { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #preview { max-width: 100%; border-radius: 8px; margin-top: 0.5rem; display: none; }
+  #gradcamImg { max-width: 100%; border-radius: 8px; margin-top: 0.5rem; display: none; }
+  .severity-SEVERE { color: #c0392b; font-weight: bold; }
+  .severity-MODERATE { color: #d68910; font-weight: bold; }
+  .severity-MILD { color: #27ae60; font-weight: bold; }
+  .severity-OTHER { color: #7f8c8d; font-weight: bold; }
+  .error { color: #c0392b; }
+</style>
+</head>
+<body>
+  <h1>Skin Disease Classifier — Research Demo</h1>
+
+  <div class="disclaimer">
+    This tool provides an AI-generated classification based on the uploaded
+    image. It is intended for research and decision-support purposes only
+    and is not a substitute for evaluation by a qualified healthcare
+    professional. Model confidence does not represent medical certainty. If
+    you have a concerning or changing skin lesion or symptom, seek
+    professional medical advice.
+  </div>
+
+  <input type="file" id="fileInput" accept="image/png, image/jpeg, image/webp" />
+  <img id="preview" alt="Selected image preview" />
+
+  <div>
+    <button id="predictBtn" disabled>Predict</button>
+    <button id="gradcamBtn" disabled>Predict + Grad-CAM</button>
+  </div>
+
+  <div id="result"></div>
+
+  <script>
+    // Point this at wherever you run `uvicorn api.main:app`.
+    const API_BASE_URL = "http://localhost:8000";
+
+    const fileInput = document.getElementById("fileInput");
+    const preview = document.getElementById("preview");
+    const predictBtn = document.getElementById("predictBtn");
+    const gradcamBtn = document.getElementById("gradcamBtn");
+    const resultDiv = document.getElementById("result");
+
+    let selectedFile = null;
+
+    fileInput.addEventListener("change", () => {
+      selectedFile = fileInput.files[0] || null;
+      predictBtn.disabled = !selectedFile;
+      gradcamBtn.disabled = !selectedFile;
+      resultDiv.innerHTML = "";
+      if (selectedFile) {
+        preview.src = URL.createObjectURL(selectedFile);
+        preview.style.display = "block";
+      } else {
+        preview.style.display = "none";
+      }
+    });
+
+    function renderResult(data, gradcamImageSrc) {
+      const top3 = data.top_3_predictions
+        .map(p => `<li><span>${p.class}</span><span>${(p.confidence * 100).toFixed(1)}%</span></li>`)
+        .join("");
+
+      resultDiv.innerHTML = `
+        <div class="card">
+          <h2>${data.predicted_class}</h2>
+          <p>Confidence: ${(data.confidence * 100).toFixed(1)}% (model confidence, not medical certainty)</p>
+          <p>Severity metadata: <span class="severity-${data.severity}">${data.severity}</span>
+             <em>(project display metadata, not a clinical assessment)</em></p>
+          <p>Model version: ${data.model_version}</p>
+          <ul class="top3">${top3}</ul>
+          ${gradcamImageSrc ? `<img id="gradcamImg" src="${gradcamImageSrc}" style="display:block" alt="Grad-CAM overlay" />` : ""}
+          <p style="font-size:0.85rem;color:#666;margin-top:0.75rem;">${data.disclaimer}</p>
+        </div>
+      `;
+    }
+
+    function renderError(message) {
+      resultDiv.innerHTML = `<p class="error">${message}</p>`;
+    }
+
+    async function submit(endpoint, isGradcam) {
+      if (!selectedFile) return;
+      predictBtn.disabled = true;
+      gradcamBtn.disabled = true;
+      resultDiv.innerHTML = "<p>Running inference…</p>";
+
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      try {
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, { method: "POST", body: formData });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          renderError(body.detail || `Request failed (${response.status}).`);
+          return;
+        }
+        const data = await response.json();
+        const gradcamSrc = isGradcam ? `data:image/png;base64,${data.gradcam_overlay_png_base64}` : null;
+        renderResult(data, gradcamSrc);
+      } catch (err) {
+        renderError("Could not reach the API. Is it running at " + API_BASE_URL + "?");
+      } finally {
+        predictBtn.disabled = false;
+        gradcamBtn.disabled = false;
+      }
+    }
+
+    predictBtn.addEventListener("click", () => submit("/predict", false));
+    gradcamBtn.addEventListener("click", () => submit("/predict/gradcam", true));
+  </script>
+</body>
+</html>
