@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from skin_disease.inference import InvalidImageError, SkinDiseasePredictor
@@ -68,6 +69,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve static files (HTML, CSS, JS from frontend/)
+from pathlib import Path
+frontend_dir = Path(__file__).parent.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+
 
 class PredictionResponse(BaseModel):
     predicted_class: str
@@ -90,6 +97,16 @@ def get_predictor() -> SkinDiseasePredictor:
     if _predictor is None:
         raise HTTPException(status_code=503, detail="Model is not loaded yet.")
     return _predictor
+
+
+@app.get("/")
+def root():
+    """Serve the frontend HTML."""
+    from fastapi.responses import FileResponse
+    frontend_index = Path(__file__).parent.parent / "frontend" / "index.html"
+    if frontend_index.exists():
+        return FileResponse(str(frontend_index), media_type="text/html")
+    return {"message": "Frontend not found. API is running at /docs"}
 
 
 @app.get("/health", response_model=HealthResponse)
